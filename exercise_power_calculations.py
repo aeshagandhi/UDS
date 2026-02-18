@@ -1,0 +1,561 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# # Authors: Aesha Gandhi and Anvita Suresh #
+
+# # Power Calculations and Experiment Planning
+# 
+# When you read about them in a book, power calculations can feel very abstract. To make the concept more concrete, and to give you a chance to familiarize yourself with power calculation tools and the considerations that go into power calculations, in this exercise you will play the role of an experiment planner hired by a Non-Governmental Organization (NGO) named [Bandhan](https://www.bandhan.org/) in West Bengal, India. Bandhan is planning to roll out a program that provides livestock, cash, and some basic training to households in extreme poverty. They hope to demonstrate the value of cash and asset transfers, and so wish their program to take the form of a randomized experiment, with data being collected on both control and treatment households.
+# 
+# Your job will be to help them estimate how many households they should enroll in the program.
+# 
+# This was, in fact, a real program, and so the data you will be working with comes from the actual program (conducted in 2007, with followup data collection in 2010, 2017, and 2020), allowing us to do some retrospective comparison of your power calculations and what actually occurred.
+
+# ## The Context
+# 
+# > Development economics has long posited that the poor may be poor for no good reason other than the fact that they started poor. This is the idea of a poverty trap, which has the implication that a one-time capital grant that makes very poor households significantly less poor ("big push") might set off a virtuous cycle that takes them out of poverty. Forty-three countries now embrace some version of this idea and make large transfers to over 3.1 million of their poorest households. In particular, the "Targeting the Ultra Poor" (TUP) intervention, pioneered by BRAC in Bangladesh, employs a multifaceted approach, offering poor households an asset transfer, consumption support, savings, and training in the hopes of unlocking a poverty trap.
+# 
+# - [*Long-Term Effects of the Targeting the Ultra Poor Program*](https://economics.mit.edu/sites/default/files/inline-files/aeri.20200667.pdf), Abhijit Banerjee, Esther Duflo, and Garima Sharma, 2021.
+# 
+# In 2007, Bandhan in West Bengal, India created a pilot program to provide direct, unconditional transfers of productive livestock and a 30 or 40 week stipend of 90 rupees a week (about 7 US dollars a week using the [Purchasing Power Parity (PPP)](https://en.wikipedia.org/wiki/Purchasing_power_parity) exchange rate). The program targeted the poorest households in these villages based on range of criteria, and the average eligible household was later estimated to have a consumption level of about 1.35 2018 US Dollars per capita per day in PPP terms $.^1$
+# 
+# Because the goal of the program was, in significant part, to demonstrate the effect of direct asset transfers, Bandhan identified twice as many eligible households as it could support in the pilot and randomly selected half of the households to act as controls and half to be treated $.^2$ Treated households were offered assets from a menu of options, from the most common choice was productive livestock (e.g., cows and goats). $^3$ Bandhan's contact with the households came to an end 18 months after the households were initially provided their livestock and cash transfers began.
+# 
+# Although data was collected on a huge range of attributes of the households in this program, our focus will be on per capita household expenditures in 2018 US Dollars (PPP). 
+# 
+# (Note that these households certainly were not buying their food with dollars, and in most cases they weren't even buying most of their food with rupees — consumption estimates in this type of study are calculated by collecting detailed data on what household members have consumed in the past week, then estimating the price one would pay to buy those goods in local markets and using [PPP conversion rates](https://en.wikipedia.org/wiki/Purchasing_power_parity) conversion rates to convert that into US Dollars).
+# 
+
+# 
+# ## Gradescope Autograding
+# 
+# Please follow [all standard guidance](https://www.practicaldatascience.org/ids720_specific/autograder_guidelines.html) for submitting this assignment to the Gradescope autograder, including storing your solutions in a dictionary called `results` and ensuring your notebook runs from the start to completion without any errors.
+# 
+# For this assignment, please name your file `exercise_power_calculations.ipynb` before uploading.
+# 
+# You can check that you have answers for all questions in your `results` dictionary with this code:
+# 
+# ```python
+# assert set(results.keys()) == {
+#     "ex2_baseline_percap_expend_mean",
+#     "ex2_baseline_percap_expend_std",
+#     "ex4_obs_needed",
+#     "ex5_effect_size_34",
+#     "ex5_treated_34",
+#     "ex6_treated_notchance",
+#     "ex7_constrained_mde",
+#     "ex9_true_effect",
+#     "ex10_power",
+#     "ex10_ratio",
+#     "ex10_standardized_effect",
+#     "ex11_power_35",
+#     "ex12_avg_effect",
+#     "ex12_reject_rate",
+#     "ex13_analytic_power",
+#     "ex13_bootstrapped_power",
+# }
+# ```
+# 
+# ### Submission Limits
+# 
+# Please remember that you are **only allowed THREE submissions to the autograder.** Your last submission (if you submit 3 or fewer times), or your third submission (if you submit more than 3 times) will determine your grade Submissions that error out will **not** count against this total.
+
+# In[ ]:
+
+
+import pandas as pd
+import numpy as np
+from scipy import stats
+import math
+
+
+# In[70]:
+
+
+import warnings
+
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
+
+
+# 
+# ## Part 1: Power Calculations
+# 
+# ### Exercise 1
+# 
+# Load a thinned version of household-level survey data from [Banerjee, Duflo, and Sharma (2021)'s](https://economics.mit.edu/research/publications/long-term-effects-targeting-ultra-poor-program) evaluation of the Bandham program [here](https://github.com/nickeubank/MIDS_Data/tree/master/cash_transfers). 
+# 
+# This is just a version of the replication data for that paper ([which can be found here](https://www.openicpsr.org/openicpsr/project/130362)) with only the variables that are relevant for our analysis.
+
+# In[71]:
+
+
+url = "https://github.com/nickeubank/MIDS_Data/raw/refs/heads/master/cash_transfers/TUP_cash_transfers.csv"
+
+data = pd.read_csv(url)
+data.head()
+
+
+# ### Exercise 2
+# 
+# The first step in doing any power calculations is to establish an estimate of the baseline level of variation that exists in the dependent variable you wish to study. In this case, that variable is Per Capita Monthly Expenditures, and the baseline survey values of expenditures are in `pc_exp_month_bl` (the `_bl` stands for "baseline", meaning this data was collected prior to any households receiving asset transfers and indeed any households being assigned to treatment or control).
+# 
+# What is the mean and standard deviation of `pc_exp_month_bl` in the baseline survey? 
+# 
+# Store the average baseline monthly per capita expenditure in your `results` dictionary under `ex2_baseline_percap_expend_mean` and the standard deviation of this statistic under `ex2_baseline_percap_expend_std`. Do **not** round these numbers — we'll use their full value repeatedly in this exercise.
+# 
+# (Monthly expenditure may feel a little abstract, so also divide by 30 to confirm our average household has the expected per capita expenditure level of about US Dollar 1.35 (PPP) a day. You don't have to save this result.)
+
+# In[72]:
+
+
+baseline_mean = data["pc_exp_month_bl"].mean()
+baseline_std = data["pc_exp_month_bl"].std()
+
+results = {}
+results["ex2_baseline_percap_expend_mean"] = baseline_mean
+results["ex2_baseline_percap_expend_std"] = baseline_std
+baseline_mean, baseline_std
+
+
+# In[73]:
+
+
+baseline_mean / 30
+
+
+# ### Exercise 3
+# 
+# For these exercises, we'll use the `power` module in `statsmodels` to do our power calculations. [You can read more about it here.](https://www.statsmodels.org/stable/stats.html#power-and-sample-size-calculations) Basically, this package just offers some convenience functions for doing the [standard analytic power calculations](https://en.wikipedia.org/wiki/Power_(statistics)#Analytic_solution) you've read about.
+# 
+# Since we're comparing means in a continuous variable (expenditures) from two samples of households, we will use `TTestIndPower` in `statsmodels.stats.power`. Import this class and instantiate a new instance (for some reason this is class based, so you have to start of with a command like `my_power = TTestIndPower()`). 
+# 
+# Note that a common situation in data science is testing a difference in *proportions* between groups (e.g., across treatment arms). This situation arises when your dependent variable is binary, and so each group's mean is just the share of observations for whom the binary variable is 1. This comes up a lot with apps and websites — e.g., "clicked an ad," "subscribed," "made a purchase." 
+# 
+# For that reason, there's actually a full sub-class of power calculating tools for [proportions you should be aware of.](https://www.statsmodels.org/stable/stats.html#proportion) Basically, because the standard deviation of a binary variable is just $\sqrt{p * (1-p)}$, power calculations become really simple. For example, you may wish to identify the sample size required to get confidence intervals of a given size using a tool like [confint_proportions_2indep](https://www.statsmodels.org/stable/generated/statsmodels.stats.proportion.confint_proportions_2indep.html#statsmodels.stats.proportion.confint_proportions_2indep).
+# 
+# But the most common use of a power test remains evaluating whether one can reject a null hypothesis of no effect, so we'll start with that here.
+
+# In[74]:
+
+
+from statsmodels.stats.power import TTestIndPower
+
+my_power = TTestIndPower()
+
+
+# ### Exercise 4
+# 
+# [TTestIndPower has three methods](https://www.statsmodels.org/stable/generated/statsmodels.stats.power.TTestIndPower.html#statsmodels.stats.power.TTestIndPower) — `plot_power`, `solve_power`, and `power`. `solve_power` does everything `power` does, though, so really there are two methods.
+# 
+# The idea of `solve_power` is that you give it all three of the four parameters that go into the power formula — minimum detectable effect, number of observations, power, and p-value $\alpha$ threshold — and it will solve for the omitted variable.
+# 
+# To get a quick flavor for how this works, set: 
+# 
+# - Minimal Detectable Effect (`effect_size`) to `0.5` (we'll take about the units of that argument soon), 
+# - `alpha` to `0.05`, 
+# - `ratio` to `1` (this is the ratio of between the number of observations being treated and the number in control — in this study, the target was to have these be equal, as that provides the best statistical power for a given total number of observations).
+# - `power` to `0.8`
+# - `alternative` to `two-sided` (we want to do a two-tailed t-test, as you could imagine social unrest caused by transfers could make people worse off).
+# - `nobs1` to `None`. By passing `None`, we're telling `solve_power` this is the quantity we want it to solve for.
+# 
+# So in other words, we're asking:
+# 
+# - how many observations do we need to have in the treatment arm,
+# - assuming we'll have the same number also in the control arm,
+# - to have an 80% chance
+# - of rejecting the null hypothesis of no-effect at a significance threshold of 0.05
+# - if the true effect is of size 0.5?
+# 
+# What's the answer?
+# 
+# Round your answer to the nearest integer and save it in `results` as `ex4_obs_needed`.
+
+# In[75]:
+
+
+treated = round(
+    my_power.solve_power(
+        effect_size=0.5,
+        alpha=0.05,
+        ratio=1,
+        power=0.8,
+        alternative="two-sided",
+        nobs1=None,
+    )
+)
+
+results["ex4_obs_needed"] = treated
+results
+
+
+# ### Exercise 5
+# 
+# Of all these quantities, perhaps the most obscure is the Minimal Detectable Effect (`effect_size`). What is this 0.5? Where did it come from? And how did you do all that without telling it that standard deviation you had me calculate?
+# 
+# If you check the docs for `solve_power`, you'll see that you're supposed to pass `effect_size` the "standardized effect size, difference between the two means divided by the standard deviation. `effect_size` has to be positive."
+# 
+# In other words, when we passed 0.5, we weren't saying we wanted to be able to detect an effect of 0.5 2018 US Dollars (PPP) per capita per month, we were saying we wanted to detect an effect of 1/2 standard deviation. 
+# 
+# Given the standard deviation in our baseline survey was about 24 Dollars, that means we were saying we wanted to detect an effect size of about 12 US Dollars. 
+# 
+# Does that feel like a lot? The average per capita monthly expenditures in the baseline survey was about 41 Dollars, so it's an increase in expenditures of about 25%. So it's certainly pretty big in proportion to the baseline level of expenditures. But whether it's a "lot" is actually not a technical question, it's a substantive one.
+# 
+# The idea of a Minimal Detectable Effect is to pick the smallest effect size that you'd care about detecting. That way if the true effect *is* the MDE, then when you reject the null you'd want to take some kind of action based on the result (e.g., scale up the program). And if the true effect is smaller, you'd be ok with your inability to reject the null hypothesis since the effect is small enough you wouldn't want to change what you're doing (e.g., you *wouldn't* want to scale up the program).
+# 
+# If you set the MDE too high, you may run an under-powered experiment where you miss out on learning that your treatment was effective; if you set the MDE too low, you're spending time and money collecting more data than is necessary given you might reject the null at a point estimate where you still wouldn't scale up the treatment.
+# 
+# So what value makes sense here? That's a question you'd want to start off by asking the stakeholders. Since Bandhan wants to use this to convince international donors and governments to support cash transfer programs, they probably need the effect to be relatively large to be convincing.
+# 
+# Let's assume that, three years after the intervention, they feel they need to show that incomes have increased by at least 34%.
+# 
+# What value does that imply should be passed to `effect_size`? What is the new implied number of treated households they'll need? How many households total?
+# 
+# Store the new MDE you would pass to `effect_size` in `results` under `ex5_effect_size_34`, and the new number of houses you'd need to put in the treatment group under `ex5_treated_34` **rounded to the nearest integer**.
+
+# In[76]:
+
+
+new_change = 41 * 0.34
+new_effect_size = new_change / baseline_std
+results["ex5_effect_size_34"] = new_effect_size
+
+new_treated = my_power.solve_power(
+    effect_size=new_effect_size,
+    alpha=0.05,
+    ratio=1,
+    power=0.8,
+    alternative="two-sided",
+    nobs1=None,
+)
+results["ex5_treated_34"] = round(new_treated)
+results
+
+
+# ### Exercise 6
+# 
+# Because Bandhan really wants to sell their result, suppose they also want to ensure no one claims it might have arisen by chance. 
+# 
+# What parameter should they adjust, and in what direction? 
+# 
+# Try modifying the relevant parameter by a factor of 2 (so either double the parameter or halve it, depending on the direction you think it should change). Can you predict what the change in the number of observations you will be before you do it?
+# 
+# Store the new number of observations that need to be treated in `results` under the key `"ex6_treated_notchance"`. As before, round the number of households needed to nearest integer.
+
+# In[77]:
+
+
+# make alpha smaller to enforce stricter threshold (control for false pos) and reduce prob of being due to chance
+new_alpha = 0.05 / 2
+new_obs = round(
+    my_power.solve_power(
+        effect_size=new_effect_size,
+        alpha=new_alpha,
+        ratio=1,
+        power=0.8,
+        alternative="two-sided",
+        nobs1=None,
+    )
+)
+results["ex6_treated_notchance"] = new_obs
+print("Alpha should be updated to:", new_alpha)
+print("Number of observations should be updated to:", new_obs)
+
+
+# ### Exercise 7
+# 
+# Now suppose that your stakeholder is budget constrained to only being able to enroll a total of 100 (50 in each arm). Assuming an alpha of `0.05` and a power of `0.8`, what is their minimal detectable effect size (in dollars)? Store your result under the key `"ex7_constrained_mde"`.
+
+# In[78]:
+
+
+new_mde = my_power.solve_power(
+    effect_size=None, alpha=0.05, ratio=1, power=0.8, alternative="two-sided", nobs1=50
+)
+results["ex7_constrained_mde"] = new_mde
+print("Minimal detectable effect size with only 50 in each arm:", new_mde)
+
+
+# ### Exercise 8
+# 
+# Suppose your stakeholder wants to see a few different scenarios to see how different experiment sizes would impact power given different effect sizes. Let's use `plot_power`. Pass it an array of treatment arm observation counts you want evaluated (I'd recommend `np.arange()`) between 20 and 100, along with effect sizes of 0.2, 0.4, and 0.6 (again, use `np.arange()`).
+# 
+# If the stakeholder decided they wanted power above 90% — they're only gonna get a chance to do this once, after all! — what kind of sample size would they need with a minimal detectable effect size of 0.6? (Approximately).
+# 
+# You may need to check the docs to figure out how to use it.
+
+# In[79]:
+
+
+my_power.plot_power(
+    dep_var="effect_size",
+    nobs=np.arange(20, 100, 10),
+    effect_size=np.arange(0.2, 1, 0.2),
+)
+
+
+# In[80]:
+
+
+n_per_group = my_power.solve_power(
+    effect_size=0.6, power=0.9, alpha=0.05, alternative="two-sided"
+)
+n_per_group
+print(
+    "From the plot, the sample size needed for MDE of 0.6 and power above 0.9 is:",
+    math.ceil(n_per_group),
+    "which is seen as the light green line in the plot (closest line to hitting 0.9)",
+)
+
+
+# ## Part 2: How Good Are These Guesses?
+# 
+# The biggest challenge with power calculations like these is that they are subject to lots of source of uncertainty. It's not just that power itself is a probabilistic concept (recall power is the *probability* you will the true effect is precisely the minimimal detectable effect you specified); the problem is that we are using estimates of population parameters as inputs to these calculations and formulas based on distributional assumptions. For example:
+# 
+# 1. We are *estimating* the true population mean from a sample of observations,
+# 2. We are *estimating* the true population standard deviation from a sample of observations,
+# 3. Our models *assume* our outcomes variables are normally distributed (i.e. modelling uncertainty).
+# 
+# Of course, as our sample size gets larger, each of these assumptions becomes less of a problem — the uncertainty in our estimates of the population mean and standard deviation will shrink and t-tests become robust to outcomes that are not normally distributed when samples become large enough (i.e., t-tests are asymptotically robust to outcomes that are not normal since the sampling distribution of the *mean* of a population converges to normal thanks to the Central Limit Theorem).
+# 
+# But all three of these mean that there's substantial uncertainty underlying these apparently clean predictions. 
+# 
+# Most people never pause to reflect on this. You run a power calculation, it tells you the probability you'd reject the null if you had a Minimal Detectable Effect of a given value, and you use these values to plan an experiment. You run the experiment, and you get a result. And by that point you've largely forgotten about your power calculation and are focused on the results you now have. 
+# 
+# In the case of this study (Bandhan), because we have data from the final survey result, we can use the experiment's results to do some simulations to see how things may have turned out in different situations. Moreover, because the actual experiment — as run in West Bengal — was quite overpowered (they had a lot more observations than they needed to reject the null at standard levels), we have a reasonably precise estimate of the true effect size, which is important to make this work. 
+# 
+# To reiterate: what we're now doing is a kind of "after-action report" / post-mortem on our power calculations. Everything we do below relies on the results of the experiment, which you (and the Bandhan team) would obviously not have had at the time you were doing your power calculations. This is the kind of thing we can only do *after* an experiment has been run, and its value is largely to help you think about uncertainty in power calculations the next time you're doing power calculations.
+
+# ### Exercise 9
+# 
+# The data we used for our power calculations above came from a baseline survey done before anyone received cash transfers. It's the kind of data collection and analysis you do *before* launching an experiment to help determine how big a sample you need in your experiment.
+# 
+# But because this team *did* run their cash transfer experiment, we have access to data on how things turned out. In particular, the variables in this data with the suffix `_el3` (short for "end-line 3") are results from surveys collected 7 years after households received their first cash transfers. 
+# 
+# With that in mind, we will treat the difference in `pc_exp_month_el3` between the `treatment == 1` and `treatment == 0` groups as the "true" effect of the experiment. Technically this is an estimated quantity, so there is some uncertainty around this estimate, but the standard error of the estimate of the effect size is ~1/6 of the effect size, the precision is good enough we can "pretend" it's the true effect size for our purposes (especially given what comes next).
+# 
+# Calculate what we will call the "true" effect of the experiment (avg difference in `pc_exp_month_el3` between treatment and control). Store this as `ex9_true_effect`. 
+# 
+
+# In[81]:
+
+
+clean_data = data.dropna(subset=["pc_exp_month_el3"])
+effect = (clean_data[clean_data["treatment"] == 1]["pc_exp_month_el3"].mean()) - (
+    clean_data[clean_data["treatment"] == 0]["pc_exp_month_el3"].mean()
+)
+results["ex9_true_effect"] = effect
+print("The true effect of the experiemnt is:", effect)
+
+
+# ### Exercise 10
+# 
+# Now let's calculate the statistical power the Bandham team may have anticipated if they had known this was the true effect size. To do so, we will use the value from exercise 9 as the Minimal Detectable Effect we want to identify, but otherwise do all our calculations the way we would if we hadn't run the experiment yet. So when you convert our effect size into "effect in standard deviations," use the standard deviation we calculated at baseline for the normalization. Then use the real number of observations in treatment, and the real ratio of people in treatment and control for whom we have valid observations of `pc_exp_month_el3`.
+# 
+# Store the ratio of you pass to `ratio` under `"ex10_ratio"`, your standardized effect size under `"ex10_standardized_effect"` and the power you get back as `"ex10_power"`. Please round the value you get back of power to two decimal places.
+# 
+# That value of power you get back is, given this effect size and the number of observations in the study, the probability the team would be able to reject the null hypothesis of no effect at alpha=0.05.
+
+# In[82]:
+
+
+# my_power.solve_power()
+
+
+true_effect_size = effect / baseline_std
+
+treatment_size = len(clean_data[clean_data["treatment"] == 1])
+# control to treatment ratio
+true_ratio = (clean_data[clean_data["treatment"] == 0]["pc_exp_month_el3"].count()) / (
+    clean_data[clean_data["treatment"] == 1]["pc_exp_month_el3"].count()
+)
+
+
+new_power = my_power.power(
+    effect_size=true_effect_size,
+    alpha=0.05,
+    ratio=true_ratio,
+    alternative="two-sided",
+    nobs1=treatment_size,
+)
+
+results["ex10_ratio"] = true_ratio
+results["ex10_standardized_effect"] = true_effect_size
+results["ex10_power"] = round(new_power, 2)
+results
+
+
+# In[83]:
+
+
+treatment_size, true_ratio, true_effect_size
+
+
+# ### Exercise 11
+# 
+# What would the power be if Bandhan had only enrolled 35 households per arm with a 1:1 ratio? Store as `ex11_power_35`. Don't round your answer.
+# 
+
+# In[84]:
+
+
+new_power_35 = my_power.power(
+    effect_size=true_effect_size, alpha=0.05, ratio=1, alternative="two-sided", nobs1=35
+)
+results["ex11_power_35"] = new_power_35
+new_power_35
+
+
+# ### Exercise 12
+# 
+# The idea of the "power" of a test is that, when we draw a sample from a population, there's some variation in who happens to end up in that sample. Consequently, even if the *true* effect size in the population is equal to our Minimal Detectable Effect, there's some probability that when we compare treated and untreated outcomes for the $N$ people who actually end up in the study, that Minimal Detectable Effect may not be evident in that sample (at the level of statistical significance $\alpha$ we have chosen).
+# 
+# Given that, one way to think of power is: "If the true effect in the population is our Minimal Detectable Effect, then if I were able to re-run this experiment over and over — drawing new people into the study and testing the difference in outcomes between the control and treated sample each time — then in what percentage of those instances of the experiment would I reject the null hypothesis of no effect?" Power of 80% means that we'd expect to reject the null of no effect in 80% of those many experiments.
+# 
+# Well, we can basically do that thought experiment with this data! 
+# 
+# To do the experiment you did the power calculations for in Exercise 11, we just need to sample 35 observations from the treated group and 35 from the control group, treat that as our experimental sample, and estimate the difference in per capita month expenditures between those two groups (along with the associated p-value).
+# 
+# Then we can repeat that over and over to simulate "re-running" the experiment, each time drawing a new sample of 35 treated observations and 35 control observations. Then we can store the p-values from all these "re-run" experiments and see how often we reject the null of no effect!
+# 
+# Note that when you do this experiment, we have to sample our 35 observations from each treatment arm *with replacement*, just as you would when bootstrapping (this is basically a version of bootstrapping). 
+# 
+# So: write a loop where, on each pass, you draw 35 observations (with replacement) from treatment and 200 from control, then calculate the treatment effect and p-value for that sample. Repeat this 10,000 times. 
+# 
+# In what share of cases would you reject the null of no effect at alpha = 0.05 (two-tailed)?
+# 
+# Store your rejection rate under the key `"ex12_reject_rate"` and estimated average effect under `"ex12_avg_effect"`.
+
+# In[85]:
+
+
+np.random.seed(0)
+
+n_sims = 10000
+n_treat = 35
+n_control = 35  # or 200, problem says both??
+alpha = 0.05
+
+treat_vals = data.loc[data["treatment"] == 1, "pc_exp_month_el3"].dropna().values
+ctrl_vals = data.loc[data["treatment"] == 0, "pc_exp_month_el3"].dropna().values
+
+pvals = []
+effects = []
+
+for i in range(n_sims):
+    treatment = np.random.choice(treat_vals, size=n_treat, replace=True)
+    control = np.random.choice(ctrl_vals, size=n_control, replace=True)
+
+    sample_effect = treatment.mean() - control.mean()
+    tstat, pval = stats.ttest_ind(treatment, control, equal_var=False)
+
+    effects.append(sample_effect)
+    pvals.append(pval)
+
+pvals = np.array(pvals)
+effects = np.array(effects)
+
+rejection_proportion = np.mean(pvals < alpha)
+avg_effect = effects.mean()
+
+results["ex12_reject_rate"] = rejection_proportion
+results["ex12_avg_effect"] = avg_effect
+
+rejection_proportion, avg_effect
+
+
+# ## Exercise 13
+# 
+# Repeat exercises 11 and 12 with 50 treated observations. Store the power from your analytic calculations using `statsmodels` under `"ex13_analytic_power"` and your real-data simulated result as `"ex13_bootstrapped_power"`.
+
+# In[86]:
+
+
+new_power_50 = my_power.power(
+    effect_size=true_effect_size, alpha=0.05, ratio=1, alternative="two-sided", nobs1=50
+)
+results["ex13_analytic_power"] = new_power_50
+
+
+np.random.seed(0)
+
+n_sims = 10000
+n_treat = 50
+n_control = 50
+alpha = 0.05
+
+treat_vals = data.loc[data["treatment"] == 1, "pc_exp_month_el3"].dropna().values
+ctrl_vals = data.loc[data["treatment"] == 0, "pc_exp_month_el3"].dropna().values
+
+pvals = []
+effects = []
+
+for i in range(n_sims):
+    treatment = np.random.choice(treat_vals, size=n_treat, replace=True)
+    control = np.random.choice(ctrl_vals, size=n_control, replace=True)
+
+    sample_effect = treatment.mean() - control.mean()
+    tstat, pval = stats.ttest_ind(treatment, control, equal_var=False)
+
+    effects.append(sample_effect)
+    pvals.append(pval)
+
+pvals = np.array(pvals)
+effects = np.array(effects)
+
+rejection_proportion = np.mean(pvals < alpha)
+avg_effect = effects.mean()
+
+results["ex13_bootstrapped_power"] = rejection_proportion
+
+new_power_50, rejection_proportion, avg_effect
+
+
+# In[87]:
+
+
+results
+
+
+# ### Exercise 14
+# 
+# What can you conclude from these results? The next time you are asked to do power calculations, how will these results shape your thinking?
+
+# **The results showed that inreasing the sample size slightly increased the average effect but more importantly, decreased both the analytic and boostrapped power because the Minimal Detectable Effect becomes smaller (because larger samples can detect smaller effects). We increased the amount of data but also made the goal harder by asking the test to detect a smaller difference.**
+# 
+# **Also, we see that the analytic power over estimates the bootstrapped power meaning that it over estimates the true probability of detecting an effect. The analytical power suggests a higher power (around 0.95) while the bootstrapped power only rejects the null about half of the time (0.53). In future power calculations, I would use the analytic power calculation as a baseline but focus on considering the simulation based approach to see how the experiment would perform in practice. Power calaculations often rely on assumptions so we shouldn't overly rely on them and be skeptical about high power values especially if data is noisy.**
+
+# ## Footnotes
+# 
+# 1. The poorest households were identified in two steps. First, residents across 120 village hamlets ranked households into five wealth quintiles. Among households ranked in the bottom quintile, Bandhan then verified eligibility per seven criteria: (i) presence of an able-bodied female member (to manage the asset), (ii) no credit access, (iii) landholding below 0.2 acres, (iv) no ownership of productive assets, (v) no able-bodied male member, (vi) presence of school-aged children who were working instead of attending school, and (vii) primary source of income being informal labor or begging. Households had to meet the first two criteria and at least three of the remaining five in order to be eligible for the TUP intervention.
+# 2. The [ethics of randomization in these types of programs](https://www.povertyactionlab.org/resource/ethical-conduct-randomized-evaluations) is subject of a rich literature, and there are currently an extensive set of guidelines used by researchers developing these types of programs.
+# 3. Of the 514 offered the livestock and cash transfers, only 266 accepted. The treatment estimates that follow are thus estimates of the effect of *offering* these transfers. Households that accepted the offers might differ systematically from those that do not, so the study simply compares those *offered* the transfer to those who did not). This is what's called an estimate of the "intention to treat" effect, and is thus *likely* an under-estimate of the effect of cash transfers that would be observed if uptake were greater.
+
+# In[88]:
+
+
+assert set(results.keys()) == {
+    "ex2_baseline_percap_expend_mean",
+    "ex2_baseline_percap_expend_std",
+    "ex4_obs_needed",
+    "ex5_effect_size_34",
+    "ex5_treated_34",
+    "ex6_treated_notchance",
+    "ex7_constrained_mde",
+    "ex9_true_effect",
+    "ex10_power",
+    "ex10_ratio",
+    "ex10_standardized_effect",
+    "ex11_power_35",
+    "ex12_avg_effect",
+    "ex12_reject_rate",
+    "ex13_analytic_power",
+    "ex13_bootstrapped_power",
+}
+
+
+# In[ ]:
+
+
+
+
